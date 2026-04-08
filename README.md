@@ -6,14 +6,14 @@ A macOS menu-bar voice input app. Press a trigger key, speak, and text is typed 
 
 - **Multiple ASR Engines** (switchable from menu bar):
   - **Apple (Streaming)** -- built-in, no setup needed, real-time partial results
-  - **Whisper (Local)** -- via [whisper.cpp](https://github.com/ggerganov/whisper.cpp) server
-  - **Qwen3-ASR (MLX)** -- via [mlx-qwen3-asr](https://github.com/moona3k/mlx-qwen3-asr), native Apple Silicon
+  - **Qwen3-ASR 1.7B (MLX)** -- best accuracy on Apple Silicon, via [mlx-qwen3-asr](https://github.com/moona3k/mlx-qwen3-asr)
+  - **Qwen3-ASR 0.6B (MLX)** -- faster, lower latency variant
   - **Cohere Transcribe** -- via remote vLLM server, #1 on Open ASR Leaderboard
 - **Recording Modes**: Hold, Toggle (Enter to send), Auto (silence detection)
 - **LLM Refinement** (optional): Clean up filler words using local [Ollama](https://ollama.com) LLM
 - **Languages**: Chinese, English, Japanese, Korean, Auto
 - **HUD Capsule**: Floating waveform animation with real-time transcription preview
-- **Streaming**: Partial results displayed during recording (API engines)
+- **Streaming**: Partial results displayed during recording
 - **Unicode Typing**: Direct CGEvent text injection (no clipboard)
 
 ## Requirements
@@ -26,10 +26,16 @@ A macOS menu-bar voice input app. Press a trigger key, speak, and text is typed 
 ## Quick Start
 
 ```bash
-# Build and install
+# Install ASR model and dependencies
+make setup
+
+# Build and install the app
 make install
 
-# Run
+# Start the ASR server
+make serve
+
+# Run the app
 open /Applications/ClaudeVoice9.app
 ```
 
@@ -42,18 +48,23 @@ The app runs as a menu-bar icon (no Dock icon). Click the microphone icon to con
 ### Apple (Streaming) -- No setup needed
 Built-in macOS speech recognition. Works out of the box.
 
-### Whisper (Local)
-Requires [whisper.cpp](https://github.com/ggerganov/whisper.cpp) server:
+### Qwen3-ASR (MLX) -- Recommended
+Best recognition on Apple Silicon. One-step setup:
 ```bash
-# Install whisper.cpp and download a model, then:
-./whisper-server --model ggml-large-v3.bin --port 2023 --language auto
+make setup    # installs mlx-qwen3-asr + downloads 1.7B model
+make serve    # starts 1.7B server on port 10800
 ```
 
-### Qwen3-ASR (MLX) -- Recommended for Chinese
-Best Chinese recognition on Apple Silicon:
+To also run the faster 0.6B model:
 ```bash
-pip install "mlx-qwen3-asr[serve]"
-mlx-qwen3-asr serve --port 10800 --api-key test123 --model Qwen/Qwen3-ASR-1.7B
+make serve-small   # starts 0.6B server on port 10801
+```
+
+Switch between models from the menu bar.
+
+To stop the server:
+```bash
+make stop
 ```
 
 ### Cohere Transcribe -- Best overall accuracy
@@ -84,7 +95,7 @@ Enable from menu bar: **LLM Refinement (Ollama)**.
 |------|-------------|
 | `AppDelegate.swift` | Central orchestrator, recording flow, mode handling |
 | `AudioEngine.swift` | AVAudioEngine, RMS calculation, WAV export |
-| `WhisperClient.swift` | OpenAI-compatible API client (Whisper/Qwen3/Cohere) |
+| `WhisperClient.swift` | OpenAI-compatible API client (Qwen3/Cohere) |
 | `SpeechRecognizer.swift` | Apple SFSpeechRecognizer streaming wrapper |
 | `LLMRefiner.swift` | Ollama LLM integration for text cleanup |
 | `TextInjector.swift` | CGEvent Unicode text typing |
