@@ -176,11 +176,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopStreamingTimer()
 
         menuBar.setRecording(false)
-        audioEngine.stop()
 
         if sttEngine.isLocalAPI {
-            finishAPIRecording()
+            // Send one final snapshot covering ALL audio before stopping the engine.
+            // This replaces both the periodic streaming and the old final re-transcription.
+            sendFinalSnapshot()
         } else {
+            audioEngine.stop()
             finishAppleRecording()
         }
     }
@@ -196,24 +198,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func finishAPIRecording() {
-        // Streaming already has a near-complete result; skip redundant final transcription
-        if !currentText.isEmpty {
-            _ = audioEngine.exportWAV()  // discard buffer
-            processResult(currentText)
-            return
-        }
-
-        guard let wavData = audioEngine.exportWAV() else {
+    /// Send one final snapshot of ALL accumulated audio, then stop the engine.
+    /// This is the single transcription call — no redundant streaming + final.
+    private func sendFinalSnapshot() {
+        guard let wavData = audioEngine.snapshotWAV() else {
+            audioEngine.stop()
             capsule?.dismiss { [weak self] in self?.isProcessing = false }
             return
         }
 
+        audioEngine.stop()
         isProcessing = true
         let engine = sttEngine
-        capsule?.updateText("Recognizing...")
-
         let lang = Settings.shared.whisperLanguage.apiValue
+
         Task {
             let text: String
             do {
