@@ -29,7 +29,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Streaming partial results (growing window)
     private var streamingTimer: Timer?
+    private var streamingTask: Task<Void, Never>?
     private var isStreamingRequestPending = false
+    private var waitingForStreamingResult = false
+    private var streamingGeneration = 0
     private let streamingInterval: TimeInterval = 2.0
 
     private var recordingMode: RecordingMode { Settings.shared.recordingMode }
@@ -106,6 +109,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isRecording = true
         currentText = ""
         waitingForFinal = false
+        waitingForStreamingResult = false
+        streamingGeneration += 1
         recordingStartTime = Date()
         silenceStart = nil
 
@@ -174,16 +179,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fnMonitor.isRecordingActive = false
         silenceStart = nil
         stopStreamingTimer()
-
         menuBar.setRecording(false)
+        audioEngine.stop()
 
-        if sttEngine.isLocalAPI {
-            // Send one final snapshot covering ALL audio before stopping the engine.
-            // This replaces both the periodic streaming and the old final re-transcription.
-            sendFinalSnapshot()
-        } else {
-            audioEngine.stop()
+        if !sttEngine.isLocalAPI {
             finishAppleRecording()
+            return
+        }
+
+        if recordingMode == .auto {
+            // Auto mode: silence-onset snapshot has all speech — wait or use it
+            if isStreamingRequestPending {
+                waitingForStreamingResult = true
+            } else if !currentText.isEmpty {
+                processResult(currentText)
+            } else {
+                sendFinalTranscription()
+            }
+        } else {
+            // Hold/toggle: cancel streaming, send one final transcription
+            streamingGeneration += 1
+            streamingTask?.cancel()
+            streamingTask = nil
+            isStreamingRequestPending = false
+            sendFinalTranscription()
         }
     }
 
@@ -198,16 +217,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Send one final snapshot of ALL accumulated audio, then stop the engine.
-    /// This is the single transcription call — no redundant streaming + final.
-    private func sendFinalSnapshot() {
+    /// Fallback: transcribe all accumulated audio (used when no streaming result exists).
+    private func sendFinalTranscription() {
         guard let wavData = audioEngine.snapshotWAV() else {
-            audioEngine.stop()
             capsule?.dismiss { [weak self] in self?.isProcessing = false }
             return
         }
 
-        audioEngine.stop()
         isProcessing = true
         let engine = sttEngine
         let lang = Settings.shared.whisperLanguage.apiValue
@@ -236,9 +252,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func cancelRecording() {
         isRecording = false
         waitingForFinal = false
+        waitingForStreamingResult = false
         fnMonitor.isRecordingActive = false
         silenceStart = nil
         stopStreamingTimer()
+        streamingTask?.cancel()
+        streamingTask = nil
+        isStreamingRequestPending = false
         menuBar.setRecording(false)
         audioEngine.stop()
         speechRecognizer.cleanup()
@@ -256,30 +276,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopStreamingTimer() {
         streamingTimer?.invalidate()
         streamingTimer = nil
-        isStreamingRequestPending = false
     }
 
     private func sendStreamingSnapshot() {
-        guard isRecording, sttEngine.isLocalAPI, !isStreamingRequestPending else { return }
+        guard sttEngine.isLocalAPI, !isStreamingRequestPending else { return }
         guard let wavData = audioEngine.snapshotWAV() else { return }
 
         isStreamingRequestPending = true
         let engine = sttEngine
         let lang = Settings.shared.whisperLanguage.apiValue
+        let gen = streamingGeneration
 
-        Task {
+        streamingTask = Task {
             do {
                 let text = try await whisperClient.transcribe(wavData: wavData, engine: engine, language: lang)
                 await MainActor.run {
-                    if self.isRecording, !text.isEmpty {
+                    guard self.streamingGeneration == gen else { return }
+                    if !text.isEmpty {
                         self.currentText = text
                         self.capsule?.updateText(text)
                     }
                     self.isStreamingRequestPending = false
+                    if self.waitingForStreamingResult {
+                        self.waitingForStreamingResult = false
+                        self.processResult(self.currentText)
+                    }
                 }
             } catch {
                 await MainActor.run {
+                    guard self.streamingGeneration == gen else { return }
                     self.isStreamingRequestPending = false
+                    if self.waitingForStreamingResult {
+                        self.waitingForStreamingResult = false
+                        if !self.currentText.isEmpty {
+                            self.processResult(self.currentText)
+                        } else {
+                            self.sendFinalTranscription()
+                        }
+                    }
                 }
             }
         }
@@ -303,7 +337,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         smoothedRMS = rmsSmoothing * smoothedRMS + (1 - rmsSmoothing) * rms
 
         if smoothedRMS < silenceThreshold {
-            if silenceStart == nil { silenceStart = Date() }
+            if silenceStart == nil {
+                silenceStart = Date()
+                // Silence just started — invalidate old streaming and send a fresh snapshot
+                // covering ALL speech. By the time 1.2s silence passes, result should be ready.
+                if sttEngine.isLocalAPI {
+                    streamingGeneration += 1
+                    streamingTask?.cancel()
+                    streamingTask = nil
+                    isStreamingRequestPending = false
+                    sendStreamingSnapshot()
+                }
+            }
             if let start = silenceStart, Date().timeIntervalSince(start) >= silenceDuration {
                 stopRecording()
             }
