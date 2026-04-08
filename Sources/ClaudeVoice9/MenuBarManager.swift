@@ -13,7 +13,7 @@ final class MenuBarManager: NSObject {
     var currentTriggerKey: TriggerKey = .rightOption
     var currentRecordingMode: RecordingMode = .hold
     var currentLanguage: WhisperLanguage = .chinese
-    var currentSTTEngine: STTEngine = .whisper
+    var currentSTTEngine: STTEngine = .qwen3
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)

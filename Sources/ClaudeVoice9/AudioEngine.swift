@@ -64,6 +64,16 @@ final class AudioEngine {
         return convertToWAV(buffers)
     }
 
+    /// Drain accumulated audio as WAV and clear buffers, keep accumulating (for streaming chunks).
+    func drainWAV() -> Data? {
+        bufferLock.lock()
+        let buffers = accumulatedBuffers
+        accumulatedBuffers.removeAll()
+        bufferLock.unlock()
+        guard !buffers.isEmpty else { return nil }
+        return convertToWAV(buffers)
+    }
+
     /// Export accumulated audio as WAV and clear buffers (for final result).
     func exportWAV() -> Data? {
         bufferLock.lock()

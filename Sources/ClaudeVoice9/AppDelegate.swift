@@ -24,13 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var smoothedRMS: Float = 0
     private let rmsSmoothing: Float = 0.3
     private let silenceThreshold: Float = 0.05
-    private let silenceDuration: TimeInterval = 0.8
+    private let silenceDuration: TimeInterval = 1.2
     private let minRecordingTime: TimeInterval = 0.8
 
     // Streaming partial results (growing window)
     private var streamingTimer: Timer?
     private var isStreamingRequestPending = false
-    private let streamingInterval: TimeInterval = 1.0
+    private let streamingInterval: TimeInterval = 2.0
 
     private var recordingMode: RecordingMode { Settings.shared.recordingMode }
     private var sttEngine: STTEngine { Settings.shared.sttEngine }
@@ -197,6 +197,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func finishAPIRecording() {
+        // Streaming already has a near-complete result; skip redundant final transcription
+        if !currentText.isEmpty {
+            _ = audioEngine.exportWAV()  // discard buffer
+            processResult(currentText)
+            return
+        }
+
         guard let wavData = audioEngine.exportWAV() else {
             capsule?.dismiss { [weak self] in self?.isProcessing = false }
             return
@@ -204,9 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         isProcessing = true
         let engine = sttEngine
-        if currentText.isEmpty {
-            capsule?.updateText("Recognizing...")
-        }
+        capsule?.updateText("Recognizing...")
 
         let lang = Settings.shared.whisperLanguage.apiValue
         Task {

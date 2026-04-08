@@ -2,7 +2,7 @@ import Foundation
 
 final class WhisperClient {
 
-    func transcribe(wavData: Data, engine: STTEngine = .whisper, language: String? = nil) async throws -> String {
+    func transcribe(wavData: Data, engine: STTEngine = .qwen3, language: String? = nil) async throws -> String {
         let baseURL = Settings.shared.url(for: engine).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(baseURL)/v1/audio/transcriptions") else {
             throw NSError(domain: "WhisperClient", code: -1,
@@ -29,11 +29,6 @@ final class WhisperClient {
         // language hint (optional)
         if let language {
             appendFormField(&body, boundary: boundary, name: "language", value: language)
-        }
-
-        // force transcription (whisper-specific, prevents translation to English)
-        if engine == .whisper {
-            appendFormField(&body, boundary: boundary, name: "task", value: "transcribe")
         }
 
         // response_format

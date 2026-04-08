@@ -1,42 +1,42 @@
 import Foundation
 
 enum STTEngine: String, CaseIterable {
-    case whisper = "whisper"
     case qwen3 = "qwen3"
+    case qwen3Small = "qwen3_small"
     case cohere = "cohere"
     case apple = "apple"
 
     var displayName: String {
         switch self {
-        case .whisper: return "Whisper (Local)"
-        case .qwen3:   return "Qwen3-ASR (MLX)"
-        case .cohere:  return "Cohere Transcribe"
-        case .apple:   return "Apple (Streaming)"
+        case .qwen3:      return "Qwen3-ASR 1.7B"
+        case .qwen3Small: return "Qwen3-ASR 0.6B"
+        case .cohere:     return "Cohere Transcribe"
+        case .apple:      return "Apple (Streaming)"
         }
     }
 
     var defaultURL: String {
         switch self {
-        case .whisper: return "http://localhost:2023"
-        case .qwen3:   return "http://localhost:10800"
-        case .cohere:  return "http://10.6.131.5:8000"
-        case .apple:   return ""
+        case .qwen3:      return "http://localhost:10800"
+        case .qwen3Small: return "http://localhost:10801"
+        case .cohere:     return "http://10.6.131.5:8000"
+        case .apple:      return ""
         }
     }
 
     var modelName: String {
         switch self {
-        case .whisper: return "whisper-1"
-        case .qwen3:   return "Qwen/Qwen3-ASR-1.7B"
-        case .cohere:  return "CohereLabs/cohere-transcribe-03-2026"
-        case .apple:   return ""
+        case .qwen3:      return "Qwen/Qwen3-ASR-1.7B"
+        case .qwen3Small: return "Qwen/Qwen3-ASR-0.6B"
+        case .cohere:     return "CohereLabs/cohere-transcribe-03-2026"
+        case .apple:      return ""
         }
     }
 
     var defaultAPIKey: String {
         switch self {
-        case .qwen3:  return "test123"
-        default:      return ""
+        case .qwen3, .qwen3Small: return "test123"
+        default: return ""
         }
     }
 
@@ -102,7 +102,6 @@ final class Settings {
         static let sttEngine = "sttEngine"
         static let recordingMode = "recordingMode"
         static let whisperLanguage = "whisperLanguage"
-        static let whisperURL = "whisperURL"
     }
 
     var sttEngine: STTEngine {
@@ -111,7 +110,7 @@ final class Settings {
                let engine = STTEngine(rawValue: raw) {
                 return engine
             }
-            return .whisper
+            return .qwen3
         }
         set { defaults.set(newValue.rawValue, forKey: Keys.sttEngine) }
     }
@@ -136,11 +135,6 @@ final class Settings {
             return .english
         }
         set { defaults.set(newValue.rawValue, forKey: Keys.whisperLanguage) }
-    }
-
-    var whisperURL: String {
-        get { defaults.string(forKey: Keys.whisperURL) ?? "http://localhost:2023" }
-        set { defaults.set(newValue, forKey: Keys.whisperURL) }
     }
 
     var llmRefinement: Bool {
