@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isStreamingRequestPending = false
     private var waitingForStreamingResult = false
     private var streamingGeneration = 0
+    private var lastSnapshotBufferIndex = 0
     private let streamingInterval: TimeInterval = 2.0
 
     private var recordingMode: RecordingMode { Settings.shared.recordingMode }
@@ -111,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         waitingForFinal = false
         waitingForStreamingResult = false
         streamingGeneration += 1
+        lastSnapshotBufferIndex = 0
         recordingStartTime = Date()
         silenceStart = nil
 
@@ -278,10 +280,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         streamingTimer = nil
     }
 
-    private func sendStreamingSnapshot() {
+    private func sendStreamingSnapshot(force: Bool = false) {
         guard sttEngine.isLocalAPI, !isStreamingRequestPending else { return }
+        // During silence detection, block timer-triggered snapshots to avoid queueing
+        if !force, silenceStart != nil { return }
         guard let wavData = audioEngine.snapshotWAV() else { return }
 
+        let bufferIndex = audioEngine.accumulatedBufferCount
         isStreamingRequestPending = true
         let engine = sttEngine
         let lang = Settings.shared.whisperLanguage.apiValue
@@ -296,10 +301,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.currentText = text
                         self.capsule?.updateText(text)
                     }
+                    self.lastSnapshotBufferIndex = bufferIndex
                     self.isStreamingRequestPending = false
                     if self.waitingForStreamingResult {
                         self.waitingForStreamingResult = false
                         self.processResult(self.currentText)
+                    } else if self.silenceStart != nil, self.isRecording {
+                        // Old request completed during silence — send only the TAIL
+                        // (audio recorded after this snapshot) to cover the gap.
+                        self.sendTailSnapshot()
                     }
                 }
             } catch {
@@ -313,6 +323,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         } else {
                             self.sendFinalTranscription()
                         }
+                    } else if self.silenceStart != nil, self.isRecording {
+                        self.sendTailSnapshot()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Send only the audio recorded AFTER the last completed snapshot.
+    /// Result is appended to currentText — avoids re-processing the full recording.
+    private func sendTailSnapshot() {
+        guard !isStreamingRequestPending else { return }
+        guard let wavData = audioEngine.snapshotWAV(fromIndex: lastSnapshotBufferIndex) else {
+            // No new audio since last snapshot — current result is complete
+            return
+        }
+
+        isStreamingRequestPending = true
+        let engine = sttEngine
+        let lang = Settings.shared.whisperLanguage.apiValue
+        let gen = streamingGeneration
+
+        streamingTask = Task {
+            do {
+                let tail = try await whisperClient.transcribe(wavData: wavData, engine: engine, language: lang)
+                await MainActor.run {
+                    guard self.streamingGeneration == gen else { return }
+                    if !tail.isEmpty {
+                        if self.currentText.isEmpty {
+                            self.currentText = tail
+                        } else {
+                            self.currentText += tail
+                        }
+                        self.capsule?.updateText(self.currentText)
+                    }
+                    self.isStreamingRequestPending = false
+                    if self.waitingForStreamingResult {
+                        self.waitingForStreamingResult = false
+                        self.processResult(self.currentText)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    guard self.streamingGeneration == gen else { return }
+                    self.isStreamingRequestPending = false
+                    if self.waitingForStreamingResult {
+                        self.waitingForStreamingResult = false
+                        self.processResult(self.currentText)
                     }
                 }
             }
@@ -339,14 +397,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if smoothedRMS < silenceThreshold {
             if silenceStart == nil {
                 silenceStart = Date()
-                // Silence just started — invalidate old streaming and send a fresh snapshot
-                // covering ALL speech. By the time 1.2s silence passes, result should be ready.
-                if sttEngine.isLocalAPI {
-                    streamingGeneration += 1
-                    streamingTask?.cancel()
-                    streamingTask = nil
-                    isStreamingRequestPending = false
-                    sendStreamingSnapshot()
+                // Silence just started — send one snapshot with all speech (bypasses silence guard).
+                // If a request IS already pending, don't queue another — wait for it.
+                if sttEngine.isLocalAPI, !isStreamingRequestPending {
+                    sendStreamingSnapshot(force: true)
                 }
             }
             if let start = silenceStart, Date().timeIntervalSince(start) >= silenceDuration {

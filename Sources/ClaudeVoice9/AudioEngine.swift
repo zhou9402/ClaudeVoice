@@ -55,10 +55,23 @@ final class AudioEngine {
         isRunning = false
     }
 
-    /// Snapshot current accumulated audio as WAV (non-destructive, for streaming chunks).
-    func snapshotWAV() -> Data? {
+    /// Number of accumulated buffers (thread-safe).
+    var accumulatedBufferCount: Int {
         bufferLock.lock()
-        let buffers = Array(accumulatedBuffers)
+        let count = accumulatedBuffers.count
+        bufferLock.unlock()
+        return count
+    }
+
+    /// Snapshot accumulated audio as WAV (non-destructive).
+    /// Pass fromIndex to get only buffers recorded after a previous snapshot.
+    func snapshotWAV(fromIndex: Int = 0) -> Data? {
+        bufferLock.lock()
+        guard fromIndex < accumulatedBuffers.count else {
+            bufferLock.unlock()
+            return nil
+        }
+        let buffers = Array(accumulatedBuffers[fromIndex...])
         bufferLock.unlock()
         guard !buffers.isEmpty else { return nil }
         return convertToWAV(buffers)
