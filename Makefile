@@ -1,4 +1,4 @@
-APP_NAME    = ClaudeVoice15
+APP_NAME    = ClaudeVoice17
 BUILD_DIR   = .build
 RELEASE_BIN = $(BUILD_DIR)/release/$(APP_NAME)
 APP_BUNDLE  = $(BUILD_DIR)/$(APP_NAME).app

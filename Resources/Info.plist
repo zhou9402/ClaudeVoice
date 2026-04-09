@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>ClaudeVoice15</string>
+    <string>ClaudeVoice17</string>
     <key>CFBundleDisplayName</key>
-    <string>Claude Voice 15</string>
+    <string>Claude Voice 17</string>
     <key>CFBundleIdentifier</key>
-    <string>com.claudevoice15.app</string>
+    <string>com.claudevoice17.app</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>
@@ -15,7 +15,7 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>ClaudeVoice15</string>
+    <string>ClaudeVoice17</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>LSUIElement</key>

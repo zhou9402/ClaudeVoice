@@ -57,29 +57,10 @@ final class NativeASREngine {
             NSLog("[NativeASR] Model not loaded for %@", engine.displayName)
             return ""
         }
-        let trimmed = trimTrailingSilence(samples)
-        guard !trimmed.isEmpty else { return "" }
-        NSLog("[NativeASR] Transcribing %d samples (trimmed from %d)...", trimmed.count, samples.count)
-        let result = model.transcribe(audio: trimmed, sampleRate: 16000, language: language)
+        guard !samples.isEmpty else { return "" }
+        NSLog("[NativeASR] Transcribing %d samples...", samples.count)
+        let result = model.transcribe(audio: samples, sampleRate: 16000, language: language)
         NSLog("[NativeASR] Result: %@", result.isEmpty ? "(empty)" : result)
         return result
-    }
-
-    /// Remove trailing silence to prevent hallucinated filler words ("Oh", "Yeah", etc.)
-    private func trimTrailingSilence(_ samples: [Float], threshold: Float = 0.01, windowMs: Int = 30) -> [Float] {
-        let windowSize = 16000 * windowMs / 1000  // 16kHz
-        var lastVoice = 0
-        var i = 0
-        while i < samples.count {
-            let end = min(i + windowSize, samples.count)
-            var sumSq: Float = 0
-            for j in i..<end { sumSq += samples[j] * samples[j] }
-            let rms = (sumSq / Float(end - i)).squareRoot()
-            if rms > threshold { lastVoice = end }
-            i += windowSize
-        }
-        // Keep at least 200ms after last voice
-        let keepTo = min(lastVoice + 3200, samples.count)
-        return keepTo > 0 ? Array(samples[..<keepTo]) : samples
     }
 }
