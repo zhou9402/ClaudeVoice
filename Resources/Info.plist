@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>ClaudeVoice9</string>
+    <string>ClaudeVoice15</string>
     <key>CFBundleDisplayName</key>
-    <string>Claude Voice 9</string>
+    <string>Claude Voice 15</string>
     <key>CFBundleIdentifier</key>
-    <string>com.claudevoice9.app</string>
+    <string>com.claudevoice15.app</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>
@@ -15,13 +15,14 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>ClaudeVoice9</string>
+    <string>ClaudeVoice15</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>15.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Claude Voice needs microphone access for speech recognition.</string>
-
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Claude Voice uses speech recognition to transcribe your voice input.</string>
 </dict>
 </plist>

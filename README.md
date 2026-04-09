@@ -4,11 +4,12 @@ A macOS menu-bar voice input app. Press a trigger key, speak, and text is typed 
 
 ## Features
 
-- **Multiple ASR Engines** (switchable from menu bar):
-  - **Apple (Streaming)** -- built-in, no setup needed, real-time partial results
-  - **Qwen3-ASR 1.7B (MLX)** -- best accuracy on Apple Silicon, via [mlx-qwen3-asr](https://github.com/moona3k/mlx-qwen3-asr)
-  - **Qwen3-ASR 0.6B (MLX)** -- faster, lower latency variant
-  - **Cohere Transcribe** -- via remote vLLM server, #1 on Open ASR Leaderboard
+- **Native On-Device ASR** via [qwen3-asr-swift](https://github.com/ivan-digital/qwen3-asr-swift) (MLX Swift):
+  - **Qwen3-ASR 1.7B** -- best accuracy on Apple Silicon (default)
+  - **Qwen3-ASR 0.6B** -- faster, lower latency variant
+- **Additional Engines** (switchable from menu bar):
+  - **Apple (Streaming)** -- built-in, no setup needed
+  - **Cohere Transcribe** -- via remote vLLM server
 - **Recording Modes**: Hold, Toggle (Enter to send), Auto (silence detection)
 - **LLM Refinement** (optional): Clean up filler words using local [Ollama](https://ollama.com) LLM
 - **Languages**: Chinese, English, Japanese, Korean, Auto
@@ -18,54 +19,39 @@ A macOS menu-bar voice input app. Press a trigger key, speak, and text is typed 
 
 ## Requirements
 
-- macOS 14.0+
+- macOS 15.0+
 - Apple Silicon (M1/M2/M3/M4)
+- Xcode (for Metal shader compilation)
 - Accessibility permission (for key monitoring)
 - Microphone permission
 
 ## Quick Start
 
 ```bash
-# Install ASR model and dependencies
-make setup
-
 # Build and install the app
 make install
 
-# Start the ASR server
-make serve
-
 # Run the app
-open /Applications/ClaudeVoice9.app
+open /Applications/ClaudeVoice15.app
 ```
 
 Grant **Accessibility** and **Microphone** permissions when prompted.
 
 The app runs as a menu-bar icon (no Dock icon). Click the microphone icon to configure.
 
-## ASR Engine Setup
+Models are downloaded automatically from HuggingFace on first use (~680MB for 0.6B, ~3.2GB for 1.7B).
+
+## ASR Engines
+
+### Qwen3-ASR (Native) -- Default, Recommended
+Runs entirely on-device via MLX Swift. No server, no network, no setup.
+- **1.7B**: Best accuracy (default)
+- **0.6B**: Lower latency
+
+Switch between models from the menu bar under **STT Engine**.
 
 ### Apple (Streaming) -- No setup needed
 Built-in macOS speech recognition. Works out of the box.
-
-### Qwen3-ASR (MLX) -- Recommended
-Best recognition on Apple Silicon. One-step setup:
-```bash
-make setup    # installs mlx-qwen3-asr + downloads 1.7B model
-make serve    # starts 1.7B server on port 10800
-```
-
-To also run the faster 0.6B model:
-```bash
-make serve-small   # starts 0.6B server on port 10801
-```
-
-Switch between models from the menu bar.
-
-To stop the server:
-```bash
-make stop
-```
 
 ### Cohere Transcribe -- Best overall accuracy
 Requires a GPU server with [vLLM](https://docs.vllm.ai):
@@ -94,8 +80,9 @@ Enable from menu bar: **LLM Refinement (Ollama)**.
 | File | Description |
 |------|-------------|
 | `AppDelegate.swift` | Central orchestrator, recording flow, mode handling |
-| `AudioEngine.swift` | AVAudioEngine, RMS calculation, WAV export |
-| `WhisperClient.swift` | OpenAI-compatible API client (Qwen3/Cohere) |
+| `AudioEngine.swift` | AVAudioEngine, RMS calculation, WAV/Float export |
+| `NativeASREngine.swift` | On-device Qwen3-ASR inference via MLX Swift |
+| `WhisperClient.swift` | OpenAI-compatible API client (Cohere) |
 | `SpeechRecognizer.swift` | Apple SFSpeechRecognizer streaming wrapper |
 | `LLMRefiner.swift` | Ollama LLM integration for text cleanup |
 | `TextInjector.swift` | CGEvent Unicode text typing |

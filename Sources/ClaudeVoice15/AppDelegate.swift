@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let audioEngine = AudioEngine()
     private let speechRecognizer = SpeechRecognizer()
     private let whisperClient = WhisperClient()
+    private let nativeEngine = NativeASREngine()
     private let textInjector = TextInjector()
     private let llmRefiner = LLMRefiner()
 
@@ -64,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onSTTEngineChanged = { [weak self] engine in
             Settings.shared.sttEngine = engine
             if self?.isRecording == true { self?.cancelRecording() }
+            if engine.isNativeASR {
+                Task { try? await self?.nativeEngine.loadModel(for: engine) }
+            }
         }
 
         fnMonitor.onFnDown = { [weak self] in self?.handleTriggerDown() }
@@ -71,6 +75,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fnMonitor.onEnterPressed = { [weak self] in self?.handleEnterPressed() }
 
         attemptStartMonitor()
+
+        // Preload native ASR model for current engine
+        if sttEngine.isNativeASR {
+            Task {
+                try? await nativeEngine.loadModel(for: sttEngine) { progress, status in
+                    print("[NativeASR] \(status) (\(Int(progress * 100))%)")
+                }
+            }
+        }
     }
 
     // MARK: - Mode-aware trigger handling
@@ -221,32 +234,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Fallback: transcribe all accumulated audio (used when no streaming result exists).
     private func sendFinalTranscription() {
-        guard let wavData = audioEngine.snapshotWAV() else {
-            capsule?.dismiss { [weak self] in self?.isProcessing = false }
-            return
-        }
-
         isProcessing = true
         let engine = sttEngine
         let lang = Settings.shared.whisperLanguage.apiValue
 
-        Task {
-            let text: String
-            do {
-                text = try await whisperClient.transcribe(wavData: wavData, engine: engine, language: lang)
-            } catch {
-                print("[\(engine.displayName)] \(error.localizedDescription)")
-                await MainActor.run {
-                    self.capsule?.updateText("Error")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        self.capsule?.dismiss { self.isProcessing = false }
-                    }
-                }
+        if engine.isNativeASR {
+            guard let samples = audioEngine.snapshotSamples() else {
+                capsule?.dismiss { [weak self] in self?.isProcessing = false }
                 return
             }
+            Task.detached { [weak self] in
+                let text = self?.nativeEngine.transcribe(samples: samples, engine: engine, language: lang) ?? ""
+                await MainActor.run {
+                    self?.processResult(text)
+                }
+            }
+        } else {
+            guard let wavData = audioEngine.snapshotWAV() else {
+                capsule?.dismiss { [weak self] in self?.isProcessing = false }
+                return
+            }
+            Task {
+                let text: String
+                do {
+                    text = try await whisperClient.transcribe(wavData: wavData, engine: engine, language: lang)
+                } catch {
+                    print("[\(engine.displayName)] \(error.localizedDescription)")
+                    await MainActor.run {
+                        self.capsule?.updateText("Error")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            self.capsule?.dismiss { self.isProcessing = false }
+                        }
+                    }
+                    return
+                }
 
-            await MainActor.run {
-                self.processResult(text)
+                await MainActor.run {
+                    self.processResult(text)
+                }
             }
         }
     }
@@ -284,7 +309,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard sttEngine.isLocalAPI, !isStreamingRequestPending else { return }
         // During silence detection, block timer-triggered snapshots to avoid queueing
         if !force, silenceStart != nil { return }
-        guard let wavData = audioEngine.snapshotWAV() else { return }
 
         let bufferIndex = audioEngine.accumulatedBufferCount
         isStreamingRequestPending = true
@@ -292,11 +316,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let lang = Settings.shared.whisperLanguage.apiValue
         let gen = streamingGeneration
 
-        streamingTask = Task {
-            do {
-                let text = try await whisperClient.transcribe(wavData: wavData, engine: engine, language: lang)
+        if engine.isNativeASR {
+            guard let samples = audioEngine.snapshotSamples() else {
+                isStreamingRequestPending = false
+                return
+            }
+            streamingTask = Task.detached { [weak self] in
+                let text = self?.nativeEngine.transcribe(samples: samples, engine: engine, language: lang) ?? ""
                 await MainActor.run {
-                    guard self.streamingGeneration == gen else { return }
+                    guard let self, self.streamingGeneration == gen else { return }
                     if !text.isEmpty {
                         self.currentText = text
                         self.capsule?.updateText(text)
@@ -306,25 +334,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if self.waitingForStreamingResult {
                         self.waitingForStreamingResult = false
                         self.processResult(self.currentText)
-                    } else if self.silenceStart != nil, self.isRecording {
-                        // Old request completed during silence — send only the TAIL
-                        // (audio recorded after this snapshot) to cover the gap.
-                        self.sendTailSnapshot()
                     }
                 }
-            } catch {
-                await MainActor.run {
-                    guard self.streamingGeneration == gen else { return }
-                    self.isStreamingRequestPending = false
-                    if self.waitingForStreamingResult {
-                        self.waitingForStreamingResult = false
-                        if !self.currentText.isEmpty {
-                            self.processResult(self.currentText)
-                        } else {
-                            self.sendFinalTranscription()
+            }
+        } else {
+            guard let wavData = audioEngine.snapshotWAV() else {
+                isStreamingRequestPending = false
+                return
+            }
+            streamingTask = Task {
+                do {
+                    let text = try await whisperClient.transcribe(wavData: wavData, engine: engine, language: lang)
+                    await MainActor.run {
+                        guard self.streamingGeneration == gen else { return }
+                        if !text.isEmpty {
+                            self.currentText = text
+                            self.capsule?.updateText(text)
                         }
-                    } else if self.silenceStart != nil, self.isRecording {
-                        self.sendTailSnapshot()
+                        self.lastSnapshotBufferIndex = bufferIndex
+                        self.isStreamingRequestPending = false
+                        if self.waitingForStreamingResult {
+                            self.waitingForStreamingResult = false
+                            self.processResult(self.currentText)
+                        }
+                    }
+                } catch {
+                    await MainActor.run {
+                        guard self.streamingGeneration == gen else { return }
+                        self.isStreamingRequestPending = false
+                        if self.waitingForStreamingResult {
+                            self.waitingForStreamingResult = false
+                            if !self.currentText.isEmpty {
+                                self.processResult(self.currentText)
+                            } else {
+                                self.sendFinalTranscription()
+                            }
+                        }
                     }
                 }
             }
@@ -335,21 +380,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Result is appended to currentText — avoids re-processing the full recording.
     private func sendTailSnapshot() {
         guard !isStreamingRequestPending else { return }
-        guard let wavData = audioEngine.snapshotWAV(fromIndex: lastSnapshotBufferIndex) else {
-            // No new audio since last snapshot — current result is complete
-            return
-        }
 
         isStreamingRequestPending = true
         let engine = sttEngine
         let lang = Settings.shared.whisperLanguage.apiValue
         let gen = streamingGeneration
 
-        streamingTask = Task {
-            do {
-                let tail = try await whisperClient.transcribe(wavData: wavData, engine: engine, language: lang)
+        if engine.isNativeASR {
+            guard let samples = audioEngine.snapshotSamples(fromIndex: lastSnapshotBufferIndex) else {
+                isStreamingRequestPending = false
+                return
+            }
+            streamingTask = Task.detached { [weak self] in
+                let tail = self?.nativeEngine.transcribe(samples: samples, engine: engine, language: lang) ?? ""
                 await MainActor.run {
-                    guard self.streamingGeneration == gen else { return }
+                    guard let self, self.streamingGeneration == gen else { return }
                     if !tail.isEmpty {
                         if self.currentText.isEmpty {
                             self.currentText = tail
@@ -364,13 +409,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.processResult(self.currentText)
                     }
                 }
-            } catch {
-                await MainActor.run {
-                    guard self.streamingGeneration == gen else { return }
-                    self.isStreamingRequestPending = false
-                    if self.waitingForStreamingResult {
-                        self.waitingForStreamingResult = false
-                        self.processResult(self.currentText)
+            }
+        } else {
+            guard let wavData = audioEngine.snapshotWAV(fromIndex: lastSnapshotBufferIndex) else {
+                isStreamingRequestPending = false
+                return
+            }
+            streamingTask = Task {
+                do {
+                    let tail = try await whisperClient.transcribe(wavData: wavData, engine: engine, language: lang)
+                    await MainActor.run {
+                        guard self.streamingGeneration == gen else { return }
+                        if !tail.isEmpty {
+                            if self.currentText.isEmpty {
+                                self.currentText = tail
+                            } else {
+                                self.currentText += tail
+                            }
+                            self.capsule?.updateText(self.currentText)
+                        }
+                        self.isStreamingRequestPending = false
+                        if self.waitingForStreamingResult {
+                            self.waitingForStreamingResult = false
+                            self.processResult(self.currentText)
+                        }
+                    }
+                } catch {
+                    await MainActor.run {
+                        guard self.streamingGeneration == gen else { return }
+                        self.isStreamingRequestPending = false
+                        if self.waitingForStreamingResult {
+                            self.waitingForStreamingResult = false
+                            self.processResult(self.currentText)
+                        }
                     }
                 }
             }

@@ -40,6 +40,11 @@ enum STTEngine: String, CaseIterable {
         }
     }
 
+    /// True for engines that run native in-process inference via MLX
+    var isNativeASR: Bool {
+        self == .qwen3 || self == .qwen3Small
+    }
+
     /// True for engines that use OpenAI-compatible /v1/audio/transcriptions API
     var isLocalAPI: Bool {
         self != .apple

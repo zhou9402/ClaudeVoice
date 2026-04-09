@@ -77,6 +77,20 @@ final class AudioEngine {
         return convertToWAV(buffers)
     }
 
+    /// Snapshot accumulated audio as 16kHz mono Float samples (for native inference).
+    /// Pass fromIndex to get only buffers recorded after a previous snapshot.
+    func snapshotSamples(fromIndex: Int = 0) -> [Float]? {
+        bufferLock.lock()
+        guard fromIndex < accumulatedBuffers.count else {
+            bufferLock.unlock()
+            return nil
+        }
+        let buffers = Array(accumulatedBuffers[fromIndex...])
+        bufferLock.unlock()
+        guard !buffers.isEmpty else { return nil }
+        return convertToFloat16k(buffers)
+    }
+
     /// Drain accumulated audio as WAV and clear buffers, keep accumulating (for streaming chunks).
     func drainWAV() -> Data? {
         bufferLock.lock()
@@ -99,6 +113,47 @@ final class AudioEngine {
     }
 
     // MARK: - Private
+
+    private func convertToFloat16k(_ buffers: [AVAudioPCMBuffer]) -> [Float]? {
+        let inputFormat = buffers[0].format
+
+        guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                               sampleRate: 16000,
+                                               channels: 1,
+                                               interleaved: false) else { return nil }
+
+        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else { return nil }
+
+        let totalInputFrames = buffers.reduce(0) { $0 + Int($1.frameLength) }
+        let ratio = 16000.0 / inputFormat.sampleRate
+        let estimatedOutputFrames = AVAudioFrameCount(Double(totalInputFrames) * ratio) + 4096
+
+        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat,
+                                                   frameCapacity: estimatedOutputFrames) else { return nil }
+
+        var bufferIndex = 0
+        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+            guard bufferIndex < buffers.count else {
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            let buf = buffers[bufferIndex]
+            bufferIndex += 1
+            outStatus.pointee = .haveData
+            return buf
+        }
+
+        var error: NSError?
+        converter.convert(to: outputBuffer, error: &error, withInputFrom: inputBlock)
+        if let error {
+            print("[AudioEngine] Float conversion error: \(error)")
+            return nil
+        }
+
+        guard let floatData = outputBuffer.floatChannelData, outputBuffer.frameLength > 0 else { return nil }
+        let count = Int(outputBuffer.frameLength)
+        return Array(UnsafeBufferPointer(start: floatData[0], count: count))
+    }
 
     private func convertToWAV(_ buffers: [AVAudioPCMBuffer]) -> Data? {
         let inputFormat = buffers[0].format
